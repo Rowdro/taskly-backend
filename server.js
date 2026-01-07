@@ -1,295 +1,126 @@
-require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const cors = require('cors');
 
 const app = express();
+app.use(cors());
+app.use(express.json());
 
-// ========== MIDDLEWARE ==========
-app.use(cors({
-  origin: [
-    'https://taskll-app.netlify.app',  // Your frontend
-    'http://localhost:3000'            // Local development
-  ],
-  credentials: true
-}));
+const JWT_SECRET = process.env.JWT_SECRET || 'taskly-secret-2024';
 
-// HEALTH CHECK - MUST RESPOND IMMEDIATELY
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    database: supabase ? 'connected' : 'mock'
-  });
-});
+let users = [];
+let tasks = [];
 
-// ========== SUPABASE CLIENT ==========
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY; // ← Use SERVICE key for backend
-
-let supabase;
-if (supabaseUrl && supabaseKey) {
-  try {
-    supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: { persistSession: false }
-    });
-    console.log('✅ Supabase client initialized (using service_role key)');
-  } catch (err) {
-    console.error('❌ Supabase init error:', err.message);
-    supabase = null;
-  }
-} else {
-  console.log('⚠️ Supabase credentials missing - running in mock mode');
-  supabase = null;
-}
-
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
-
-// ========== MIDDLEWARE: AUTH TOKEN ==========
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
+const authenticate = (req, res, next) => {
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    if (!token) return res.status(401).json({ success: false, message: 'No token' });
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.userId = decoded.userId;
+        next();
+    } catch {
+        res.status(401).json({ success: false, message: 'Invalid token' });
     }
-    req.user = user;
-    next();
-  });
-}
+};
 
-// ========== HEALTH & ROOT ENDPOINTS (CRITICAL FOR RENDER) ==========
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'Taskly Backend API', 
-    status: 'running',
-    version: '1.0.0',
-    database: supabase ? 'connected' : 'mock-mode'
-  });
-});
-
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    message: 'Taskly API is running',
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Taskly API is running' });
-});
-
-// ========== USER REGISTRATION ==========
-app.post('/api/register', async (req, res) => {
-  try {
-    const { email, password, firstName, lastName } = req.body;
-
-    // If supabase not connected, return mock response
-    if (!supabase) {
-      return res.status(201).json({
-        success: true,
-        user: {
-          id: 'mock-user-id',
-          email: email,
-          firstName: firstName,
-          lastName: lastName,
-          createdAt: new Date().toISOString()
-        },
-        token: 'mock-jwt-token-for-development'
-      });
-    }
-
-    // Check if user exists
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email.toLowerCase())
-      .single();
-
-    if (existingUser) {
-      return res.status(400).json({ error: 'User already exists' });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
-    const { data: user, error } = await supabase
-      .from('users')
-      .insert([
-        {
-          email: email.toLowerCase(),
-          password: hashedPassword,
-          first_name: firstName,
-          last_name: lastName,
-          created_at: new Date().toISOString()
-        }
-      ])
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // Create JWT token
-    const token = jwt.sign(
-      { id: user.id, email: user.email },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
-    res.json({
-      success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        createdAt: user.created_at
-      },
-      token
-    });
-
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Registration failed' });
-  }
-});
-
-// ========== USER LOGIN ==========
-app.post('/api/login', async (req, res) => {
-  try {
+// AUTH
+app.post('/api/auth/login', (req, res) => {
     const { email, password } = req.body;
+    const user = users.find(u => u.email === email && u.password === password);
+    if (!user) return res.status(400).json({ success: false, message: 'Invalid email or password' });
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    const { password: _, ...userWithoutPassword } = user;
+    res.json({ success: true, token, user: userWithoutPassword });
+});
 
-    // If supabase not connected, return mock response
-    if (!supabase) {
-      return res.json({
-        success: true,
-        user: {
-          id: 'mock-user-id',
-          email: email,
-          firstName: 'Mock',
-          lastName: 'User',
-          createdAt: new Date().toISOString()
-        },
-        token: 'mock-jwt-token-for-development'
-      });
-    }
+app.post('/api/auth/register', (req, res) => {
+    const { firstName, lastName, email, password } = req.body;
+    if (users.some(u => u.email === email)) return res.status(400).json({ success: false, message: 'User exists' });
+    const newUser = {
+        id: users.length + 1,
+        firstName, lastName, email, password,
+        profilePicture: "https://via.placeholder.com/200",
+        bio: "", theme: "light",
+        joinDate: new Date().toISOString()
+    };
+    users.push(newUser);
+    const token = jwt.sign({ userId: newUser.id }, JWT_SECRET, { expiresIn: '7d' });
+    const { password: _, ...userWithoutPassword } = newUser;
+    res.status(201).json({ success: true, token, user: userWithoutPassword });
+});
 
-    // Get user
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email.toLowerCase())
-      .single();
+// TASKS
+app.get('/api/tasks', authenticate, (req, res) => {
+    const userTasks = tasks.filter(task => task.userId === req.userId);
+    res.json({ success: true, tasks: userTasks });
+});
 
-    if (error || !user) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+app.post('/api/tasks', authenticate, (req, res) => {
+    const newTask = {
+        id: tasks.length + 1,
+        userId: req.userId,
+        ...req.body,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    };
+    tasks.push(newTask);
+    res.status(201).json({ success: true, task: newTask });
+});
 
-    // Check password
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+app.put('/api/tasks/:id', authenticate, (req, res) => {
+    const taskId = parseInt(req.params.id);
+    const taskIndex = tasks.findIndex(t => t.id === taskId && t.userId === req.userId);
+    if (taskIndex === -1) return res.status(404).json({ success: false, message: 'Task not found' });
+    tasks[taskIndex] = { ...tasks[taskIndex], ...req.body, updatedAt: new Date().toISOString() };
+    res.json({ success: true, task: tasks[taskIndex] });
+});
 
-    // Create JWT token
-    const token = jwt.sign(
-      { id: user.id, email: user.email },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
+app.delete('/api/tasks/:id', authenticate, (req, res) => {
+    const taskId = parseInt(req.params.id);
+    const taskIndex = tasks.findIndex(t => t.id === taskId && t.userId === req.userId);
+    if (taskIndex === -1) return res.status(404).json({ success: false, message: 'Task not found' });
+    tasks.splice(taskIndex, 1);
+    res.json({ success: true, message: 'Task deleted' });
+});
 
-    res.json({
-      success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        createdAt: user.created_at
-      },
-      token
+// PROFILE
+app.get('/api/profile', authenticate, (req, res) => {
+    const user = users.find(u => u.id === req.userId);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    const { password, ...userWithoutPassword } = user;
+    res.json({ success: true, user: userWithoutPassword });
+});
+
+app.put('/api/profile', authenticate, (req, res) => {
+    const userIndex = users.findIndex(u => u.id === req.userId);
+    if (userIndex === -1) return res.status(404).json({ success: false, message: 'User not found' });
+    const { password, ...updateData } = req.body;
+    users[userIndex] = { ...users[userIndex], ...updateData };
+    const { password: _, ...userWithoutPassword } = users[userIndex];
+    res.json({ success: true, user: userWithoutPassword });
+});
+
+// STATS
+app.get('/api/stats', authenticate, (req, res) => {
+    const userTasks = tasks.filter(task => task.userId === req.userId);
+    const stats = {
+        total: userTasks.length,
+        pending: userTasks.filter(t => t.status === 'pending').length,
+        completed: userTasks.filter(t => t.status === 'completed').length,
+        archived: userTasks.filter(t => t.status === 'archived').length
+    };
+    res.json({ success: true, stats });
+});
+
+// HOME - EXACTLY AS YOU WANTED
+app.get('/', (req, res) => {
+    res.json({ 
+        message: "Taskly Backend API", 
+        status: "running", 
+        version: "1.0.0", 
+        database: "mock-mode" 
     });
-
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed' });
-  }
 });
 
-// ========== PROFILE ROUTES ==========
-app.get('/api/profile', authenticateToken, async (req, res) => {
-  try {
-    if (!supabase) {
-      return res.json({
-        success: true,
-        user: {
-          id: req.user.id,
-          email: req.user.email,
-          first_name: 'Mock',
-          last_name: 'User',
-          bio: 'Mock bio',
-          profile_image: null,
-          theme: 'light'
-        }
-      });
-    }
-
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, email, first_name, last_name, bio, profile_image, created_at, theme')
-      .eq('id', req.user.id)
-      .single();
-
-    if (error) throw error;
-
-    res.json({ success: true, user });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch profile' });
-  }
-});
-
-// ========== TASK ROUTES ==========
-app.get('/api/tasks', authenticateToken, async (req, res) => {
-  try {
-    if (!supabase) {
-      return res.json({
-        success: true,
-        tasks: [
-          { id: '1', title: 'Sample Task 1', completed: false },
-          { id: '2', title: 'Sample Task 2', completed: true }
-        ]
-      });
-    }
-
-    const { data: tasks, error } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    res.json({ success: true, tasks });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch tasks' });
-  }
-});
-
-// ========== SERVER START ==========
-const PORT = process.env.PORT || 3001;
-
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`✅ Health endpoint: http://localhost:${PORT}/health`);
-  console.log(`✅ API endpoint: http://localhost:${PORT}/api/health`);
-  console.log(`✅ Supabase: ${supabase ? 'Connected' : 'Mock mode'}`);
-});
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
