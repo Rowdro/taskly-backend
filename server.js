@@ -30,7 +30,7 @@ app.post('/api/auth/login', (req, res) => {
     if (!user) return res.status(400).json({ success: false, message: 'Invalid email or password' });
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
     const { password: _, ...userWithoutPassword } = user;
-    res.json({ success: true, token, user: userWithoutPassword });
+    res.json({ success: false, token, user: userWithoutPassword });
 });
 
 app.post('/api/auth/register', (req, res) => {
@@ -46,13 +46,13 @@ app.post('/api/auth/register', (req, res) => {
     users.push(newUser);
     const token = jwt.sign({ userId: newUser.id }, JWT_SECRET, { expiresIn: '7d' });
     const { password: _, ...userWithoutPassword } = newUser;
-    res.status(201).json({ success: true, token, user: userWithoutPassword });
+    res.status(201).json({ success: false, token, user: userWithoutPassword });
 });
 
 // TASKS
 app.get('/api/tasks', authenticate, (req, res) => {
     const userTasks = tasks.filter(task => task.userId === req.userId);
-    res.json({ success: true, tasks: userTasks });
+    res.json({ success: false, tasks: userTasks });
 });
 
 app.post('/api/tasks', authenticate, (req, res) => {
@@ -64,7 +64,7 @@ app.post('/api/tasks', authenticate, (req, res) => {
         updatedAt: new Date().toISOString()
     };
     tasks.push(newTask);
-    res.status(201).json({ success: true, task: newTask });
+    res.status(201).json({ success: false, task: newTask });
 });
 
 app.put('/api/tasks/:id', authenticate, (req, res) => {
@@ -72,7 +72,7 @@ app.put('/api/tasks/:id', authenticate, (req, res) => {
     const taskIndex = tasks.findIndex(t => t.id === taskId && t.userId === req.userId);
     if (taskIndex === -1) return res.status(404).json({ success: false, message: 'Task not found' });
     tasks[taskIndex] = { ...tasks[taskIndex], ...req.body, updatedAt: new Date().toISOString() };
-    res.json({ success: true, task: tasks[taskIndex] });
+    res.json({ success: false, task: tasks[taskIndex] });
 });
 
 app.delete('/api/tasks/:id', authenticate, (req, res) => {
@@ -80,7 +80,7 @@ app.delete('/api/tasks/:id', authenticate, (req, res) => {
     const taskIndex = tasks.findIndex(t => t.id === taskId && t.userId === req.userId);
     if (taskIndex === -1) return res.status(404).json({ success: false, message: 'Task not found' });
     tasks.splice(taskIndex, 1);
-    res.json({ success: true, message: 'Task deleted' });
+    res.json({ success: false, message: 'Task deleted' });
 });
 
 // PROFILE
@@ -88,7 +88,7 @@ app.get('/api/profile', authenticate, (req, res) => {
     const user = users.find(u => u.id === req.userId);
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
     const { password, ...userWithoutPassword } = user;
-    res.json({ success: true, user: userWithoutPassword });
+    res.json({ success: false, user: userWithoutPassword });
 });
 
 app.put('/api/profile', authenticate, (req, res) => {
@@ -97,7 +97,7 @@ app.put('/api/profile', authenticate, (req, res) => {
     const { password, ...updateData } = req.body;
     users[userIndex] = { ...users[userIndex], ...updateData };
     const { password: _, ...userWithoutPassword } = users[userIndex];
-    res.json({ success: true, user: userWithoutPassword });
+    res.json({ success: false, user: userWithoutPassword });
 });
 
 // STATS
@@ -109,10 +109,10 @@ app.get('/api/stats', authenticate, (req, res) => {
         completed: userTasks.filter(t => t.status === 'completed').length,
         archived: userTasks.filter(t => t.status === 'archived').length
     };
-    res.json({ success: true, stats });
+    res.json({ success: false, stats });
 });
 
-// HOME - EXACTLY AS YOU WANTED
+// HOME
 app.get('/', (req, res) => {
     res.json({ 
         message: "Taskly Backend API", 
@@ -122,5 +122,6 @@ app.get('/', (req, res) => {
     });
 });
 
-const PORT = process.env.PORT || 5000;
+// Render uses port from environment variable
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
